@@ -24,10 +24,9 @@ function requireAuth(req, res, next) {
 
 function requirePermission(capability) {
   return (req, res, next) => {
-    const role = db.prepare('SELECT * FROM roles WHERE id = ?').get(req.user.role);
+    const role = db.findRole(req.user.role);
     if (!role) return res.status(403).json({ error: 'دور غير معروف' });
-    const perms = JSON.parse(role.perms_json);
-    if (!perms[capability]) return res.status(403).json({ error: 'ليس لديك صلاحية لهذا الإجراء' });
+    if (!role.perms[capability]) return res.status(403).json({ error: 'ليس لديك صلاحية لهذا الإجراء' });
     next();
   };
 }
