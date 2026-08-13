@@ -1,79 +1,153 @@
-// db.js — SQLite database setup, schema, and first-run seed data.
-const path = require('path');
+// db.js — simple JSON-file-backed data store. Pure JavaScript, zero native dependencies,
+// so it builds reliably on any free-tier hosting platform (no C++ compilation step).
 const fs = require('fs');
+const path = require('path');
 const bcrypt = require('bcryptjs');
-const Database = require('better-sqlite3');
 
 const DATA_DIR = path.join(__dirname, 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+const DB_FILE = path.join(DATA_DIR, 'rawasin.json');
 
-const db = new Database(path.join(DATA_DIR, 'rawasin.db'));
-db.pragma('journal_mode = WAL');
+function loadRaw() {
+  if (!fs.existsSync(DB_FILE)) return null;
+  try { return JSON.parse(fs.readFileSync(DB_FILE, 'utf-8')); }
+  catch (e) { console.error('[db] failed to parse rawasin.json, starting fresh:', e.message); return null; }
+}
 
-db.exec(`
-CREATE TABLE IF NOT EXISTS units (
-  code TEXT PRIMARY KEY,
-  project TEXT NOT NULL,
-  desc TEXT,
-  area REAL DEFAULT 0,
-  garden_area REAL DEFAULT 0,
-  price REAL DEFAULT 0,
-  garage REAL DEFAULT 0,
-  condition TEXT DEFAULT 'متاحة',
-  has_floorplan INTEGER DEFAULT 0
-);
+function saveRaw(data) {
+  const tmp = DB_FILE + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 1), 'utf-8');
+  fs.renameSync(tmp, DB_FILE);
+}
 
-CREATE TABLE IF NOT EXISTS floorplans (
-  code TEXT PRIMARY KEY,
-  image_base64 TEXT NOT NULL,
-  updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (code) REFERENCES units(code) ON DELETE CASCADE
-);
+let state = loadRaw();
 
-CREATE TABLE IF NOT EXISTS roles (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  perms_json TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS users (
-  username TEXT PRIMARY KEY,
-  password_hash TEXT NOT NULL,
-  role TEXT NOT NULL,
-  display TEXT,
-  FOREIGN KEY (role) REFERENCES roles(id)
-);
-`);
-
-// ---------------- First-run seed ----------------
-const unitCount = db.prepare('SELECT COUNT(*) AS c FROM units').get().c;
-if (unitCount === 0) {
-  console.log('[seed] Empty database detected — seeding default data...');
-
-  const seedUnits = require('./seed-units.json');
-  const insertUnit = db.prepare(`
-    INSERT INTO units (code, project, desc, area, garden_area, price, garage, condition)
-    VALUES (@code, @project, @desc, @area, @garden_area, @price, @garage, @condition)
-  `);
-  const insertUnits = db.transaction((rows) => {
-    for (const u of rows) insertUnit.run(u);
-  });
-  insertUnits(seedUnits);
-  console.log(`[seed] Inserted ${seedUnits.length} units.`);
+if (!state) {
+  console.log('[seed] No database file found — seeding default data...');
+  const seedUnits = require('./seed-units.json').map(u => ({
+    code: u.code, project: u.project, desc: u.desc || u.code,
+    area: u.area || 0, garden_area: u.garden_area || 0,
+    price: u.price || 0, garage: u.garage || 0, condition: u.condition || 'متاحة',
+    has_floorplan: false,
+  }));
 
   const defaultRoles = [
     { id: 'admin', name: 'مدير عام', perms: { 'plan.use': true, 'inventory.view': true, 'inventory.edit': true, 'inventory.add': true, 'inventory.delete': true, 'inventory.backup': true, 'users.manage': true } },
     { id: 'sales', name: 'مبيعات', perms: { 'plan.use': true, 'inventory.view': true, 'inventory.edit': false, 'inventory.add': false, 'inventory.delete': false, 'inventory.backup': false, 'users.manage': false } },
     { id: 'viewer', name: 'مشاهدة فقط', perms: { 'plan.use': true, 'inventory.view': true, 'inventory.edit': false, 'inventory.add': false, 'inventory.delete': false, 'inventory.backup': false, 'users.manage': false } },
   ];
-  const insertRole = db.prepare('INSERT INTO roles (id, name, perms_json) VALUES (?, ?, ?)');
-  for (const r of defaultRoles) insertRole.run(r.id, r.name, JSON.stringify(r.perms));
-  console.log('[seed] Inserted default roles.');
 
-  const defaultPasswordHash = bcrypt.hashSync('admin123', 10);
-  db.prepare('INSERT INTO users (username, password_hash, role, display) VALUES (?, ?, ?, ?)')
-    .run('admin', defaultPasswordHash, 'admin', 'مدير النظام');
-  console.log('[seed] Created default admin user (username: admin / password: admin123 — CHANGE THIS after first login).');
+  const defaultUsers = [
+    { username: 'admin', password_hash: bcrypt.hashSync('admin123', 10), role: 'admin', display: 'مدير النظام' },
+  ];
+
+  state = { units: seedUnits, roles: defaultRoles, users: defaultUsers, floorplans: {} };
+  saveRaw(state);
+  console.log(`[seed] Inserted ${seedUnits.length} units, ${defaultRoles.length} roles, 1 admin user.`);
+  console.log('[seed] Default login — username: admin / password: admin123 (CHANGE THIS after first login).');
 }
 
-module.exports = db;
+function persist() { saveRaw(state); }
+
+// ---------------- Units ----------------
+function listUnits() {
+  return state.units.map(u => ({ ...u, hasFloorPlan: !!u.has_floorplan }));
+}
+function findUnit(code) { return state.units.find(u => u.code === code); }
+function insertUnit(u) {
+  state.units.push({
+    code: u.code, project: u.project, desc: u.desc || u.code,
+    area: u.area || 0, garden_area: u.garden_area || 0,
+    price: u.price || 0, garage: u.garage || 0, condition: u.condition || 'متاحة',
+    has_floorplan: false,
+  });
+  persist();
+}
+function updateUnit(code, patch) {
+  const u = findUnit(code);
+  if (!u) return false;
+  Object.assign(u, {
+    project: patch.project ?? u.project, desc: patch.desc ?? u.desc,
+    area: patch.area ?? u.area, garden_area: patch.garden_area ?? u.garden_area,
+    price: patch.price ?? u.price, garage: patch.garage ?? u.garage,
+    condition: patch.condition ?? u.condition,
+  });
+  persist();
+  return true;
+}
+function deleteUnit(code) {
+  const before = state.units.length;
+  state.units = state.units.filter(u => u.code !== code);
+  delete state.floorplans[code];
+  persist();
+  return state.units.length < before;
+}
+function bulkUpsertUnits(rows) {
+  let created = 0, updated = 0;
+  for (const u of rows) {
+    const existing = findUnit(u.code);
+    if (existing) { updateUnit(u.code, u); updated++; }
+    else { insertUnit(u); created++; }
+  }
+  return { created, updated };
+}
+
+// ---------------- Floor plans ----------------
+function getFloorplan(code) { return state.floorplans[code] || null; }
+function setFloorplan(code, imageBase64) {
+  state.floorplans[code] = imageBase64;
+  const u = findUnit(code);
+  if (u) u.has_floorplan = true;
+  persist();
+}
+function deleteFloorplan(code) {
+  delete state.floorplans[code];
+  const u = findUnit(code);
+  if (u) u.has_floorplan = false;
+  persist();
+}
+
+// ---------------- Roles ----------------
+function listRoles() { return state.roles; }
+function findRole(id) { return state.roles.find(r => r.id === id); }
+function upsertRole(role) {
+  const existing = findRole(role.id);
+  if (existing) { existing.name = role.name; existing.perms = role.perms; }
+  else { state.roles.push({ id: role.id, name: role.name, perms: role.perms }); }
+  persist();
+}
+function deleteRole(id) {
+  state.roles = state.roles.filter(r => r.id !== id);
+  persist();
+}
+
+// ---------------- Users ----------------
+function listUsers() { return state.users.map(u => ({ username: u.username, role: u.role, display: u.display })); }
+function findUser(username) { return state.users.find(u => u.username === username); }
+function insertUser(u) {
+  state.users.push({ username: u.username, password_hash: u.password_hash, role: u.role, display: u.display || '' });
+  persist();
+}
+function updateUser(originalUsername, patch) {
+  const u = findUser(originalUsername);
+  if (!u) return false;
+  if (patch.username) u.username = patch.username;
+  if (patch.password_hash) u.password_hash = patch.password_hash;
+  if (patch.role) u.role = patch.role;
+  if (patch.display !== undefined) u.display = patch.display;
+  persist();
+  return true;
+}
+function deleteUser(username) {
+  const before = state.users.length;
+  state.users = state.users.filter(u => u.username !== username);
+  persist();
+  return state.users.length < before;
+}
+
+module.exports = {
+  listUnits, findUnit, insertUnit, updateUnit, deleteUnit, bulkUpsertUnits,
+  getFloorplan, setFloorplan, deleteFloorplan,
+  listRoles, findRole, upsertRole, deleteRole,
+  listUsers, findUser, insertUser, updateUser, deleteUser,
+};
