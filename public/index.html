@@ -1152,9 +1152,10 @@ function computeFourYearPlan(){
     rows.push({ label:`دفعة جراج ${garageCount} من 4`, date:new Date(curDate), amount:garagePart, note:'', yearStart:false });
 
     qNum++; curDate = addMonths(curDate, 3);
-    rows.push({ label:`قسط ربع سنوي رقم ${qNum}`, date:new Date(curDate), amount:qBase + annualPerYear, note:'+ دفعة سنوية', yearStart:false });
+    rows.push({ label:`قسط ربع سنوي رقم ${qNum}`, date:new Date(curDate), amount:qBase, note:'', yearStart:false });
 
-    curDate = addMonths(curDate, 1); // spacing before next year's first quarter (annual payment settles here)
+    curDate = addMonths(curDate, 1); // annual payment falls one month after the 4th installment of the year
+    rows.push({ label:`دفعة سنوية (سنة ${year})`, date:new Date(curDate), amount:annualPerYear, note:'', yearStart:false });
   }
   curDate = addMonths(curDate, 1);
   rows.push({ label:'دفعة مستحقة (10%)', date:new Date(curDate), amount:dueAmt, note:'', yearStart:false });
