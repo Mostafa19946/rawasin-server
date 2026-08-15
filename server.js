@@ -78,11 +78,11 @@ app.post('/api/units/bulk', requireAuth, requirePermission('inventory.add'), (re
   res.json({ ok: true, ...result });
 });
 
-// ==================== FLOOR PLANS ====================
+// ==================== FLOOR PLANS (multiple images per unit) ====================
 app.get('/api/floorplan/:code', requireAuth, (req, res) => {
-  const image = db.getFloorplan(req.params.code);
-  if (!image) return res.status(404).json({ error: 'لا يوجد رسم هندسي' });
-  res.json({ image });
+  const images = db.getFloorplans(req.params.code);
+  if (!images.length) return res.status(404).json({ error: 'لا يوجد رسم هندسي' });
+  res.json({ images });
 });
 
 app.post('/api/floorplan/:code', requireAuth, requirePermission('inventory.edit'), (req, res) => {
@@ -90,12 +90,19 @@ app.post('/api/floorplan/:code', requireAuth, requirePermission('inventory.edit'
   const { image } = req.body || {};
   if (!image) return res.status(400).json({ error: 'لا توجد بيانات صورة' });
   if (!db.findUnit(code)) return res.status(404).json({ error: 'الوحدة غير موجودة' });
-  db.setFloorplan(code, image);
+  const result = db.addFloorplan(code, image);
+  if (!result.ok) return res.status(400).json({ error: result.error });
+  res.json({ ok: true, count: result.count });
+});
+
+app.delete('/api/floorplan/:code/:index', requireAuth, requirePermission('inventory.edit'), (req, res) => {
+  const ok = db.deleteFloorplanImage(req.params.code, parseInt(req.params.index, 10));
+  if (!ok) return res.status(404).json({ error: 'الصورة غير موجودة' });
   res.json({ ok: true });
 });
 
 app.delete('/api/floorplan/:code', requireAuth, requirePermission('inventory.edit'), (req, res) => {
-  db.deleteFloorplan(req.params.code);
+  db.deleteAllFloorplans(req.params.code);
   res.json({ ok: true });
 });
 
