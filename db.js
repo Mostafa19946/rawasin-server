@@ -92,15 +92,37 @@ function bulkUpsertUnits(rows) {
   return { created, updated };
 }
 
-// ---------------- Floor plans ----------------
-function getFloorplan(code) { return state.floorplans[code] || null; }
-function setFloorplan(code, imageBase64) {
-  state.floorplans[code] = imageBase64;
+// ---------------- Floor plans (multiple images per unit) ----------------
+const MAX_FLOORPLAN_IMAGES = 12;
+
+function normalizeFloorplanEntry(entry) {
+  // Backward compatibility: older data stored a single base64 string per unit.
+  if (typeof entry === 'string') return [entry];
+  if (Array.isArray(entry)) return entry;
+  return [];
+}
+function getFloorplans(code) { return normalizeFloorplanEntry(state.floorplans[code]); }
+function addFloorplan(code, imageBase64) {
+  const list = getFloorplans(code);
+  if (list.length >= MAX_FLOORPLAN_IMAGES) return { ok: false, error: `الحد الأقصى ${MAX_FLOORPLAN_IMAGES} صور لكل وحدة` };
+  list.push(imageBase64);
+  state.floorplans[code] = list;
   const u = findUnit(code);
   if (u) u.has_floorplan = true;
   persist();
+  return { ok: true, count: list.length };
 }
-function deleteFloorplan(code) {
+function deleteFloorplanImage(code, index) {
+  const list = getFloorplans(code);
+  if (index < 0 || index >= list.length) return false;
+  list.splice(index, 1);
+  state.floorplans[code] = list;
+  const u = findUnit(code);
+  if (u) u.has_floorplan = list.length > 0;
+  persist();
+  return true;
+}
+function deleteAllFloorplans(code) {
   delete state.floorplans[code];
   const u = findUnit(code);
   if (u) u.has_floorplan = false;
@@ -147,7 +169,7 @@ function deleteUser(username) {
 
 module.exports = {
   listUnits, findUnit, insertUnit, updateUnit, deleteUnit, bulkUpsertUnits,
-  getFloorplan, setFloorplan, deleteFloorplan,
+  getFloorplans, addFloorplan, deleteFloorplanImage, deleteAllFloorplans,
   listRoles, findRole, upsertRole, deleteRole,
   listUsers, findUser, insertUser, updateUser, deleteUser,
 };
