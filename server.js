@@ -1,4 +1,4 @@
-// server.js — Rawasin payment-plan system: real backend (Express + JSON-file store + bcrypt + JWT).
+// server.js — Rawasin payment-plan system: real backend (Express + Airtable persistence + bcrypt + JWT).
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
@@ -13,8 +13,24 @@ app.use(cors());
 app.use(express.json({ limit: '15mb' })); // floor plan images are base64-encoded JSON payloads
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Wait for the initial Airtable load to finish before serving any /api/ request,
+// so requests never race ahead of startup and see an empty in-memory cache.
+app.use(async (req, res, next) => {
+  if (!req.path.startsWith('/api/') || req.path === '/api/health') return next();
+  try { await db.whenReady(); next(); }
+  catch (e) { res.status(503).json({ error: 'الخادم لم يتصل بقاعدة البيانات بعد، حاول مرة أخرى بعد قليل' }); }
+});
+
+// Small helper so every route doesn't need its own try/catch for Airtable failures.
+function h(fn) {
+  return (req, res) => Promise.resolve(fn(req, res)).catch(err => {
+    console.error('[api error]', req.method, req.path, err.message);
+    res.status(500).json({ error: 'حدث خطأ غير متوقع في الخادم: ' + err.message });
+  });
+}
+
 // ==================== AUTH ====================
-app.post('/api/login', (req, res) => {
+app.post('/api/login', h(async (req, res) => {
   const { username, password } = req.body || {};
   if (!username || !password) return res.status(400).json({ error: 'أدخل اسم المستخدم وكلمة المرور' });
 
@@ -32,9 +48,9 @@ app.post('/api/login', (req, res) => {
     roleName: role ? role.name : user.role,
     perms: role ? role.perms : {},
   });
-});
+}));
 
-app.get('/api/me', requireAuth, (req, res) => {
+app.get('/api/me', requireAuth, h(async (req, res) => {
   const user = db.findUser(req.user.username);
   if (!user) return res.status(404).json({ error: 'مستخدم غير موجود' });
   const role = db.findRole(user.role);
@@ -43,105 +59,105 @@ app.get('/api/me', requireAuth, (req, res) => {
     roleName: role ? role.name : user.role,
     perms: role ? role.perms : {},
   });
-});
+}));
 
 // ==================== UNITS ====================
-app.get('/api/units', requireAuth, (req, res) => {
+app.get('/api/units', requireAuth, h(async (req, res) => {
   res.json(db.listUnits());
-});
+}));
 
-app.post('/api/units', requireAuth, requirePermission('inventory.add'), (req, res) => {
+app.post('/api/units', requireAuth, requirePermission('inventory.add'), h(async (req, res) => {
   const u = req.body || {};
   if (!u.code || !u.project) return res.status(400).json({ error: 'كود الوحدة والمشروع مطلوبان' });
   if (db.findUnit(u.code)) return res.status(409).json({ error: 'هذا الكود موجود بالفعل' });
-  db.insertUnit(u);
+  await db.insertUnit(u);
   res.status(201).json({ ok: true });
-});
+}));
 
-app.put('/api/units/:code', requireAuth, requirePermission('inventory.edit'), (req, res) => {
-  const ok = db.updateUnit(req.params.code, req.body || {});
+app.put('/api/units/:code', requireAuth, requirePermission('inventory.edit'), h(async (req, res) => {
+  const ok = await db.updateUnit(req.params.code, req.body || {});
   if (!ok) return res.status(404).json({ error: 'الوحدة غير موجودة' });
   res.json({ ok: true });
-});
+}));
 
-app.delete('/api/units/:code', requireAuth, requirePermission('inventory.delete'), (req, res) => {
-  const ok = db.deleteUnit(req.params.code);
+app.delete('/api/units/:code', requireAuth, requirePermission('inventory.delete'), h(async (req, res) => {
+  const ok = await db.deleteUnit(req.params.code);
   if (!ok) return res.status(404).json({ error: 'الوحدة غير موجودة' });
   res.json({ ok: true });
-});
+}));
 
 // Bulk upsert (used by the Excel/JSON import feature) — creates or updates by code.
-app.post('/api/units/bulk', requireAuth, requirePermission('inventory.add'), (req, res) => {
+app.post('/api/units/bulk', requireAuth, requirePermission('inventory.add'), h(async (req, res) => {
   const list = req.body && req.body.units;
   if (!Array.isArray(list)) return res.status(400).json({ error: 'صيغة غير صحيحة' });
-  const result = db.bulkUpsertUnits(list);
+  const result = await db.bulkUpsertUnits(list);
   res.json({ ok: true, ...result });
-});
+}));
 
 // ==================== FLOOR PLANS (multiple images per unit) ====================
-app.get('/api/floorplan/:code', requireAuth, (req, res) => {
-  const images = db.getFloorplans(req.params.code);
+app.get('/api/floorplan/:code', requireAuth, h(async (req, res) => {
+  const images = await db.getFloorplans(req.params.code);
   if (!images.length) return res.status(404).json({ error: 'لا يوجد رسم هندسي' });
   res.json({ images });
-});
+}));
 
-app.post('/api/floorplan/:code', requireAuth, requirePermission('inventory.edit'), (req, res) => {
+app.post('/api/floorplan/:code', requireAuth, requirePermission('inventory.edit'), h(async (req, res) => {
   const code = req.params.code;
   const { image } = req.body || {};
   if (!image) return res.status(400).json({ error: 'لا توجد بيانات صورة' });
   if (!db.findUnit(code)) return res.status(404).json({ error: 'الوحدة غير موجودة' });
-  const result = db.addFloorplan(code, image);
+  const result = await db.addFloorplan(code, image);
   if (!result.ok) return res.status(400).json({ error: result.error });
   res.json({ ok: true, count: result.count });
-});
+}));
 
-app.delete('/api/floorplan/:code/:index', requireAuth, requirePermission('inventory.edit'), (req, res) => {
-  const ok = db.deleteFloorplanImage(req.params.code, parseInt(req.params.index, 10));
+app.delete('/api/floorplan/:code/:index', requireAuth, requirePermission('inventory.edit'), h(async (req, res) => {
+  const ok = await db.deleteFloorplanImage(req.params.code, parseInt(req.params.index, 10));
   if (!ok) return res.status(404).json({ error: 'الصورة غير موجودة' });
   res.json({ ok: true });
-});
+}));
 
-app.delete('/api/floorplan/:code', requireAuth, requirePermission('inventory.edit'), (req, res) => {
-  db.deleteAllFloorplans(req.params.code);
+app.delete('/api/floorplan/:code', requireAuth, requirePermission('inventory.edit'), h(async (req, res) => {
+  await db.deleteAllFloorplans(req.params.code);
   res.json({ ok: true });
-});
+}));
 
 // ==================== ROLES ====================
-app.get('/api/roles', requireAuth, (req, res) => {
+app.get('/api/roles', requireAuth, h(async (req, res) => {
   res.json(db.listRoles());
-});
+}));
 
-app.post('/api/roles', requireAuth, requirePermission('users.manage'), requireAdminRole, (req, res) => {
+app.post('/api/roles', requireAuth, requirePermission('users.manage'), requireAdminRole, h(async (req, res) => {
   const { id, name, perms } = req.body || {};
   if (!name || !perms) return res.status(400).json({ error: 'بيانات ناقصة' });
   const roleId = id || 'role_' + Date.now();
-  db.upsertRole({ id: roleId, name, perms });
+  await db.upsertRole({ id: roleId, name, perms });
   res.json({ ok: true, id: roleId });
-});
+}));
 
-app.delete('/api/roles/:id', requireAuth, requirePermission('users.manage'), requireAdminRole, (req, res) => {
+app.delete('/api/roles/:id', requireAuth, requirePermission('users.manage'), requireAdminRole, h(async (req, res) => {
   const inUse = db.listUsers().some(u => u.role === req.params.id);
   if (inUse) return res.status(409).json({ error: 'لا يمكن حذف دور مرتبط بمستخدمين حاليين' });
-  db.deleteRole(req.params.id);
+  await db.deleteRole(req.params.id);
   res.json({ ok: true });
-});
+}));
 
 // ==================== USERS ====================
 // Listing users is allowed for anyone with users.manage (to view), but creating/editing/
 // deleting credentials is hard-restricted to the "admin" role account (requireAdminRole).
-app.get('/api/users', requireAuth, requirePermission('users.manage'), (req, res) => {
+app.get('/api/users', requireAuth, requirePermission('users.manage'), h(async (req, res) => {
   res.json(db.listUsers());
-});
+}));
 
-app.post('/api/users', requireAuth, requirePermission('users.manage'), requireAdminRole, (req, res) => {
+app.post('/api/users', requireAuth, requirePermission('users.manage'), requireAdminRole, h(async (req, res) => {
   const { username, password, role, display } = req.body || {};
   if (!username || !password || !role) return res.status(400).json({ error: 'بيانات ناقصة' });
   if (db.findUser(username)) return res.status(409).json({ error: 'اسم المستخدم موجود بالفعل' });
-  db.insertUser({ username, password_hash: bcrypt.hashSync(password, 10), role, display });
+  await db.insertUser({ username, password_hash: bcrypt.hashSync(password, 10), role, display });
   res.status(201).json({ ok: true });
-});
+}));
 
-app.put('/api/users/:username', requireAuth, requirePermission('users.manage'), requireAdminRole, (req, res) => {
+app.put('/api/users/:username', requireAuth, requirePermission('users.manage'), requireAdminRole, h(async (req, res) => {
   const originalUsername = req.params.username;
   const { username, password, role, display } = req.body || {};
   const existing = db.findUser(originalUsername);
@@ -155,15 +171,15 @@ app.put('/api/users/:username', requireAuth, requirePermission('users.manage'), 
   }
   const patch = { username: newUsername, role, display };
   if (password) patch.password_hash = bcrypt.hashSync(password, 10);
-  db.updateUser(originalUsername, patch);
+  await db.updateUser(originalUsername, patch);
   res.json({ ok: true });
-});
+}));
 
-app.delete('/api/users/:username', requireAuth, requirePermission('users.manage'), requireAdminRole, (req, res) => {
+app.delete('/api/users/:username', requireAuth, requirePermission('users.manage'), requireAdminRole, h(async (req, res) => {
   if (req.params.username === 'admin') return res.status(400).json({ error: 'لا يمكن حذف حساب المدير الأساسي' });
-  db.deleteUser(req.params.username);
+  await db.deleteUser(req.params.username);
   res.json({ ok: true });
-});
+}));
 
 // ==================== HEALTH CHECK ====================
 app.get('/api/health', (req, res) => res.json({ ok: true, time: new Date().toISOString() }));
