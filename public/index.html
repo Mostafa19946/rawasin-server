@@ -1369,30 +1369,49 @@ function renderInventory(){
   });
 
   $('invBody').querySelectorAll('.areaEdit').forEach(inp=>{
-    inp.addEventListener('change', ()=>{
+    inp.addEventListener('change', async ()=>{
       const u = UNITS.find(x=>x.code===inp.getAttribute('data-code'));
-      if(u){ u.area = parseFloat(inp.value) || 0; cloudSaveUnits(); }
+      if(u){
+        u.area = parseFloat(inp.value) || 0;
+        try{ await apiUpdateUnit(u.code, {area: u.area}); }
+        catch(err){ alert('تعذّر الحفظ: ' + err.message); }
+      }
     });
   });
   $('invBody').querySelectorAll('.gardenEdit').forEach(inp=>{
-    inp.addEventListener('change', ()=>{
+    inp.addEventListener('change', async ()=>{
       const u = UNITS.find(x=>x.code===inp.getAttribute('data-code'));
-      if(u){ u.garden_area = parseFloat(inp.value) || 0; cloudSaveUnits(); }
+      if(u){
+        u.garden_area = parseFloat(inp.value) || 0;
+        try{ await apiUpdateUnit(u.code, {garden_area: u.garden_area}); }
+        catch(err){ alert('تعذّر الحفظ: ' + err.message); }
+      }
     });
   });
   $('invBody').querySelectorAll('.priceEdit').forEach(inp=>{
-    inp.addEventListener('change', ()=>{
+    inp.addEventListener('change', async ()=>{
       const u = UNITS.find(x=>x.code===inp.getAttribute('data-code'));
-      if(u){ u.price = parseFloat(inp.value) || 0; cloudSaveUnits(); }
+      if(u){
+        u.price = parseFloat(inp.value) || 0;
+        try{ await apiUpdateUnit(u.code, {price: u.price}); }
+        catch(err){ alert('تعذّر الحفظ: ' + err.message); }
+      }
     });
   });
   $('invBody').querySelectorAll('.statSel').forEach(sel=>{
-    sel.addEventListener('change', ()=>{
+    sel.addEventListener('change', async ()=>{
       const u = UNITS.find(x=>x.code===sel.getAttribute('data-code'));
       if(u){
+        const prevCondition = u.condition;
         u.condition = sel.value;
         sel.className = 'statSel stat-' + sel.value;
-        cloudSaveUnits();
+        try{ await apiUpdateUnit(u.code, {condition: u.condition}); }
+        catch(err){
+          u.condition = prevCondition;
+          sel.value = prevCondition;
+          sel.className = 'statSel stat-' + prevCondition;
+          alert('تعذّر الحفظ: ' + err.message);
+        }
       }
     });
   });
@@ -1533,7 +1552,7 @@ $('saveUnitBtn').addEventListener('click', ()=>{
     garage: parseFloat($('nu_garage').value) || 150000
   };
   UNITS.push(newUnit);
-  cloudSaveUnits();
+  apiAddUnit(newUnit).catch(err => alert('تعذّر الحفظ على الخادم: ' + err.message));
   $('addUnitForm').style.display = 'none';
   renderInventory();
 });
@@ -1827,6 +1846,7 @@ async function cloudSaveRoles(){ /* handled per-action via apiSaveRole/apiDelete
 async function cloudSaveUsers(){ /* handled per-action via apiSaveUser/apiDeleteUser (apiAddUser/apiUpdateUser) */ }
 
 async function apiAddUnit(unit){ return apiFetch('/api/units', { method:'POST', body: JSON.stringify(unit) }); }
+async function apiUpdateUnit(code, patch){ return apiFetch('/api/units/' + encodeURIComponent(code), { method:'PUT', body: JSON.stringify(patch) }); }
 async function apiDeleteUnit(code){ return apiFetch('/api/units/' + encodeURIComponent(code), { method:'DELETE' }); }
 async function apiSaveRole(role){ return apiFetch('/api/roles', { method:'POST', body: JSON.stringify(role) }); }
 async function apiDeleteRole(id){ return apiFetch('/api/roles/' + encodeURIComponent(id), { method:'DELETE' }); }
