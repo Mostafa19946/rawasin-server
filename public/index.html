@@ -923,8 +923,7 @@ function selectUnit(code){
 }
 
 // ---------- Years pills & plan presets (matching original Rawasin contract templates) ----------
-const COMPOUND_YEARS = [4,5,6,7,8,10];
-const MALL_YEARS = [4,5,6,7];
+const MALL_YEARS = [5,6,7];
 
 const COMPOUND_PRESETS = {
   4:  { downPct:10, annualOn:false, annualPct:4, garageOn:true, garageQ:6, maintQ:14, milestones:[],
@@ -941,8 +940,6 @@ const COMPOUND_PRESETS = {
 // Mall plans: down payment + quarterly installments + optional annual payment + maintenance deposit at 3.5 years (quarter 14).
 // No garage (retail/medical units don't have a parking allocation), off by default but still toggleable per-unit if needed.
 const MALL_PRESETS = {
-  4: { downPct:5,  annualOn:true, annualPct:4, garageOn:false, garageQ:6, maintQ:14, milestones:[], discountPct:25,
-       note:'خطة الـ4 سنوات لوحدات المول تطبّق خصمًا تلقائيًا بنسبة 25% من سعر الوحدة (يظهر فى حقل "نسبة الخصم" بالخطوة الأولى، وقابل للتعديل يدويًا لو احتجت).' },
   5: { downPct:5,  annualOn:true, annualPct:4, garageOn:false, garageQ:6, maintQ:14, milestones:[] },
   6: { downPct:10, annualOn:true, annualPct:4, garageOn:false, garageQ:6, maintQ:14, milestones:[] },
   7: { downPct:15, annualOn:true, annualPct:4, garageOn:false, garageQ:6, maintQ:14, milestones:[] },
@@ -951,8 +948,22 @@ const MALL_PRESETS = {
 function currentPresetSet(){
   return (selectedUnit && selectedUnit.project === 'مول رواسين') ? MALL_PRESETS : COMPOUND_PRESETS;
 }
+// Compound plan availability depends on the unit's area:
+//  < 170 m²  → 4, 5, 6, 7 years   (also gets an automatic 25% discount, see applyPreset)
+//  < 200 m²  → 4, 5, 6, 7, 8 years
+//  >= 200 m² → all plans, including 10 years
+function compoundYearsForArea(area){
+  if(area < 170) return [4,5,6,7];
+  if(area < 200) return [4,5,6,7,8];
+  return [4,5,6,7,8,10];
+}
 function currentYearsOptions(){
-  return (selectedUnit && selectedUnit.project === 'مول رواسين') ? MALL_YEARS : COMPOUND_YEARS;
+  if(!selectedUnit) return [4,5,6,7,8,10];
+  if(selectedUnit.project === 'مول رواسين') return MALL_YEARS;
+  return compoundYearsForArea(selectedUnit.area || 0);
+}
+function isSmallCompoundUnit(){
+  return !!(selectedUnit && selectedUnit.project !== 'مول رواسين' && (selectedUnit.area || 0) < 170);
 }
 
 let milestones = [];
@@ -990,18 +1001,26 @@ function applyPreset(years){
   $('garageToggle').checked = p.garageOn;
   $('garageQ').value = p.garageQ;
   $('maintQ').value = p.maintQ;
-  $('discountPct').value = p.discountPct || 0;
   milestones = p.milestones.map(m => ({...m}));
   renderMilestones();
 
-  // Only Compound's 4-year plan has the special locked structure; Mall's 4-year plan behaves normally.
+  // Automatic 25% discount for small Compound units (area < 170 m²), regardless of which plan is chosen.
+  const smallUnit = isSmallCompoundUnit();
+  $('discountPct').value = smallUnit ? 25 : (p.discountPct || 0);
+
+  // Only Compound's 4-year plan has the special locked structure; Mall's plans behave normally.
   const isLocked4y = years === 4 && !isMall;
   $('milestonesSection').style.display = isLocked4y ? 'none' : 'block';
   ['annualToggle','garageToggle','maintToggle'].forEach(id => {
     $(id).closest('.toggle-row').style.opacity = isLocked4y ? '.4' : '1';
     $(id).disabled = isLocked4y;
   });
-  if(p.note){ $('planNote').style.display = 'block'; $('planNote').textContent = 'ℹ️ ' + p.note; }
+
+  let note = p.note || '';
+  if(smallUnit){
+    note = (note ? note + ' ' : '') + 'تم تطبيق خصم تلقائي 25% لأن مساحة الوحدة أقل من 170 م² — يمكن تعديل النسبة يدويًا لو احتجت.';
+  }
+  if(note){ $('planNote').style.display = 'block'; $('planNote').textContent = 'ℹ️ ' + note; }
   else { $('planNote').style.display = 'none'; }
 }
 
