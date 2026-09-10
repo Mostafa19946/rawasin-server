@@ -934,7 +934,7 @@ const COMPOUND_PRESETS = {
   8:  { downPct:10, annualOn:true, annualPct:4, garageOn:true, garageQ:6, maintQ:14,
         milestones:[{pct:10, quarter:16, label:'دفعة 10%'}] },
   10: { downPct:5, annualOn:false, annualPct:4, garageOn:true, garageQ:6, maintQ:14,
-        milestones:[{pct:3, quarter:1, label:'دفعة 3%'},{pct:5, quarter:8, label:'دفعة 5%'},{pct:5, quarter:16, label:'دفعة 5%'}] },
+        milestones:[{pct:10, quarter:12, label:'دفعة مستحقة 10%'}] },
 };
 
 // Mall plans: down payment + quarterly installments + optional annual payment + maintenance deposit at 3.5 years (quarter 14).
@@ -949,12 +949,13 @@ function currentPresetSet(){
   return (selectedUnit && selectedUnit.project === 'مول رواسين') ? MALL_PRESETS : COMPOUND_PRESETS;
 }
 // Compound plan availability depends on the unit's area:
-//  < 170 m²  → 4, 5, 6, 7 years   (also gets an automatic 25% discount, see applyPreset)
-//  < 200 m²  → 4, 5, 6, 7, 8 years
-//  >= 200 m² → all plans, including 10 years
+//  < 170 m²  → 4, 5, 6, 7, 10 years   (also gets an automatic 25% discount, see applyPreset)
+//  < 200 m²  → 4, 5, 6, 7, 8, 10 years
+//  >= 200 m² → all plans
+// The 10-year plan is always available regardless of area.
 function compoundYearsForArea(area){
-  if(area < 170) return [4,5,6,7];
-  if(area < 200) return [4,5,6,7,8];
+  if(area < 170) return [4,5,6,7,10];
+  if(area < 200) return [4,5,6,7,8,10];
   return [4,5,6,7,8,10];
 }
 function currentYearsOptions(){
