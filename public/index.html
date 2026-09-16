@@ -1005,9 +1005,11 @@ function applyPreset(years){
   milestones = p.milestones.map(m => ({...m}));
   renderMilestones();
 
-  // Automatic 25% discount for small Compound units (area < 170 m²), regardless of which plan is chosen.
+  // Automatic 25% discount for small Compound units (area < 170 m²) — only when the 4-year plan
+  // specifically is selected. Other plans never auto-fill the discount field.
   const smallUnit = isSmallCompoundUnit();
-  $('discountPct').value = smallUnit ? 25 : (p.discountPct || 0);
+  const autoDiscountApplies = smallUnit && years === 4 && !isMall;
+  $('discountPct').value = autoDiscountApplies ? 25 : (p.discountPct || 0);
 
   // Only Compound's 4-year plan has the special locked structure; Mall's plans behave normally.
   const isLocked4y = years === 4 && !isMall;
@@ -1018,8 +1020,8 @@ function applyPreset(years){
   });
 
   let note = p.note || '';
-  if(smallUnit){
-    note = (note ? note + ' ' : '') + 'تم تطبيق خصم تلقائي 25% لأن مساحة الوحدة أقل من 170 م² — يمكن تعديل النسبة يدويًا لو احتجت.';
+  if(autoDiscountApplies){
+    note = (note ? note + ' ' : '') + 'تم تطبيق خصم تلقائي 25% لأن مساحة الوحدة أقل من 170 م² وخطة الـ4 سنوات مختارة — يمكن تعديل النسبة يدويًا لو احتجت.';
   }
   if(note){ $('planNote').style.display = 'block'; $('planNote').textContent = 'ℹ️ ' + note; }
   else { $('planNote').style.display = 'none'; }
