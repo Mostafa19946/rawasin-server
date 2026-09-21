@@ -157,10 +157,12 @@ async function initWithRetry(retries = 3) {
   }
 }
 
-let initPromise = initWithRetry().catch(err => {
+let initPromise = initWithRetry();
+// Attach a handler immediately so a failed startup never crashes the whole Node process with
+// an "unhandled promise rejection" — real error handling/retry happens inside whenReady().
+initPromise.catch(err => {
   console.error('[db] FAILED TO INITIALIZE FROM AIRTABLE after retries:', err.message);
   console.error('[db] Check AIRTABLE_BASE_ID / AIRTABLE_TOKEN / AIRTABLE_TABLE environment variables.');
-  throw err; // propagate — whenReady() must not report ready=true on a failed load
 });
 
 // If startup genuinely failed, later requests get a chance to retry the connection instead
