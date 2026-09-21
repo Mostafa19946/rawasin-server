@@ -19,25 +19,58 @@ if (!AIRTABLE_BASE_ID || !AIRTABLE_TOKEN) {
 const AT_URL = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${encodeURIComponent(AIRTABLE_TABLE)}`;
 const recordIdCache = {}; // key -> Airtable record id, once known
 
-async function atGet(key) {
-  const res = await fetch(AT_URL, { headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` } });
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// Wraps fetch with retries on rate-limiting (429) and transient server errors (5xx),
+// so a momentary Airtable hiccup never gets mistaken for "this data doesn't exist".
+async function atFetch(url, opts, retries = 4) {
+  let lastErr;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(url, opts);
+      if (res.status === 429 || res.status >= 500) {
+        lastErr = new Error(`Airtable HTTP ${res.status}`);
+        if (attempt < retries) { await sleep(300 * Math.pow(2, attempt)); continue; }
+        throw lastErr;
+      }
+      return res;
+    } catch (e) {
+      lastErr = e;
+      if (attempt < retries) { await sleep(300 * Math.pow(2, attempt)); continue; }
+      throw lastErr;
+    }
+  }
+  throw lastErr;
+}
+
+// Fetches the whole table once. Used to answer several key lookups from a single request
+// (Airtable's free-tier rate limit is only 5 req/sec per base, and every extra request here
+// is one we don't need to spend).
+async function atFetchAllRecords() {
+  const res = await atFetch(AT_URL, { headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` } });
   if (!res.ok) throw new Error(`Airtable GET failed: ${res.status}`);
   const data = await res.json();
-  const rec = (data.records || []).find(r => r.fields && r.fields.key === key);
-  if (rec) { recordIdCache[key] = rec.id; return rec.fields.value || null; }
-  return null;
+  const records = data.records || [];
+  records.forEach(r => { if (r.fields && r.fields.key) recordIdCache[r.fields.key] = r.id; });
+  return records;
+}
+
+async function atGet(key) {
+  const records = await atFetchAllRecords();
+  const rec = records.find(r => r.fields && r.fields.key === key);
+  return rec ? (rec.fields.value || null) : null;
 }
 
 async function atSet(key, value) {
   if (recordIdCache[key]) {
-    const res = await fetch(AT_URL, {
+    const res = await atFetch(AT_URL, {
       method: 'PATCH',
       headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ records: [{ id: recordIdCache[key], fields: { value } }] }),
     });
     if (!res.ok) throw new Error(`Airtable PATCH failed: ${res.status}`);
   } else {
-    const res = await fetch(AT_URL, {
+    const res = await atFetch(AT_URL, {
       method: 'POST',
       headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ records: [{ fields: { key, value } }] }),
@@ -50,11 +83,10 @@ async function atSet(key, value) {
 
 async function atDelete(key) {
   if (!recordIdCache[key]) {
-    // make sure we know the record id before trying to delete it
-    await atGet(key);
+    await atGet(key); // populates recordIdCache as a side effect if the record exists
     if (!recordIdCache[key]) return;
   }
-  const res = await fetch(`${AT_URL}/${recordIdCache[key]}`, {
+  const res = await atFetch(`${AT_URL}/${recordIdCache[key]}`, {
     method: 'DELETE',
     headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
   });
@@ -68,14 +100,14 @@ let users = [];
 let ready = false;
 
 async function init() {
-  const [uJson, rJson, usJson] = await Promise.all([
-    atGet('rawasin_units_v1').catch(() => null),
-    atGet('rawasin_roles_v1').catch(() => null),
-    atGet('rawasin_users_v1').catch(() => null),
-  ]);
+  // One request for all three keys, with retry/backoff baked in — a transient Airtable
+  // hiccup here throws (and is retried), it never gets treated as "no data exists yet".
+  const records = await atFetchAllRecords();
+  const byKey = {};
+  records.forEach(r => { if (r.fields && r.fields.key) byKey[r.fields.key] = r.fields.value; });
 
-  if (uJson) {
-    units = JSON.parse(uJson);
+  if (byKey['rawasin_units_v1']) {
+    units = JSON.parse(byKey['rawasin_units_v1']);
   } else {
     console.log('[seed] No units found in Airtable — seeding default inventory...');
     units = require('./seed-units.json').map(u => ({
@@ -87,8 +119,8 @@ async function init() {
     await atSet('rawasin_units_v1', JSON.stringify(units));
   }
 
-  if (rJson) {
-    roles = JSON.parse(rJson);
+  if (byKey['rawasin_roles_v1']) {
+    roles = JSON.parse(byKey['rawasin_roles_v1']);
   } else {
     console.log('[seed] No roles found in Airtable — seeding default roles...');
     roles = [
@@ -99,8 +131,8 @@ async function init() {
     await atSet('rawasin_roles_v1', JSON.stringify(roles));
   }
 
-  if (usJson) {
-    users = JSON.parse(usJson);
+  if (byKey['rawasin_users_v1']) {
+    users = JSON.parse(byKey['rawasin_users_v1']);
   } else {
     console.log('[seed] No users found in Airtable — creating default admin account...');
     users = [{ username: 'admin', password_hash: bcrypt.hashSync('admin123', 10), role: 'admin', display: 'مدير النظام' }];
@@ -111,12 +143,40 @@ async function init() {
   ready = true;
   console.log(`[db] Loaded from Airtable — ${units.length} units, ${roles.length} roles, ${users.length} users.`);
 }
-const initPromise = init().catch(err => {
-  console.error('[db] FAILED TO INITIALIZE FROM AIRTABLE:', err.message);
+
+// Retries the whole init sequence a few times before giving up, since a cold start racing
+// another instance's restart is exactly when Airtable is most likely to rate-limit us.
+async function initWithRetry(retries = 3) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try { await init(); return; }
+    catch (err) {
+      console.error(`[db] init attempt ${attempt + 1}/${retries + 1} failed:`, err.message);
+      if (attempt < retries) await sleep(1000 * Math.pow(2, attempt));
+      else throw err;
+    }
+  }
+}
+
+let initPromise = initWithRetry().catch(err => {
+  console.error('[db] FAILED TO INITIALIZE FROM AIRTABLE after retries:', err.message);
   console.error('[db] Check AIRTABLE_BASE_ID / AIRTABLE_TOKEN / AIRTABLE_TABLE environment variables.');
+  throw err; // propagate — whenReady() must not report ready=true on a failed load
 });
 
-async function whenReady() { await initPromise; return ready; }
+// If startup genuinely failed, later requests get a chance to retry the connection instead
+// of being stuck forever behind one failed attempt.
+async function whenReady() {
+  try {
+    await initPromise;
+    return true;
+  } catch (e) {
+    if (!ready) {
+      initPromise = initWithRetry(1).catch(err => { throw err; });
+      await initPromise;
+    }
+    return ready;
+  }
+}
 
 function persistUnits() { return atSet('rawasin_units_v1', JSON.stringify(units)); }
 function persistRoles() { return atSet('rawasin_roles_v1', JSON.stringify(roles)); }
@@ -184,12 +244,9 @@ async function bulkUpsertUnits(rows) {
 const MAX_FLOORPLAN_IMAGES = 12;
 
 async function listFloorplanRows(code) {
-  const res = await fetch(AT_URL, { headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` } });
-  if (!res.ok) throw new Error(`Airtable GET failed: ${res.status}`);
-  const data = await res.json();
+  const records = await atFetchAllRecords();
   const prefix = `floorplan_${code}_`;
-  const matches = (data.records || []).filter(r => r.fields && typeof r.fields.key === 'string' && r.fields.key.startsWith(prefix));
-  matches.forEach(r => { recordIdCache[r.fields.key] = r.id; });
+  const matches = records.filter(r => r.fields && typeof r.fields.key === 'string' && r.fields.key.startsWith(prefix));
   matches.sort((a, b) => a.fields.key.localeCompare(b.fields.key)); // suffix is a timestamp, so this is chronological
   return matches.map(r => ({ key: r.fields.key, value: r.fields.value }));
 }
