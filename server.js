@@ -1,4 +1,4 @@
-// server.js — Rawasin payment-plan system: real backend (Express + Airtable persistence + bcrypt + JWT).
+// server.js — Rawasin payment-plan system: real backend (Express + MongoDB persistence + bcrypt + JWT).
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
@@ -13,7 +13,7 @@ app.use(cors());
 app.use(express.json({ limit: '15mb' })); // floor plan images are base64-encoded JSON payloads
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Wait for the initial Airtable load to finish before serving any /api/ request,
+// Wait for the initial database load to finish before serving any /api/ request,
 // so requests never race ahead of startup and see an empty in-memory cache.
 app.use(async (req, res, next) => {
   if (!req.path.startsWith('/api/') || req.path === '/api/health') return next();
@@ -21,7 +21,7 @@ app.use(async (req, res, next) => {
   catch (e) { res.status(503).json({ error: 'الخادم لم يتصل بقاعدة البيانات بعد، حاول مرة أخرى بعد قليل' }); }
 });
 
-// Small helper so every route doesn't need its own try/catch for Airtable failures.
+// Small helper so every route doesn't need its own try/catch for database failures.
 function h(fn) {
   return (req, res) => Promise.resolve(fn(req, res)).catch(err => {
     console.error('[api error]', req.method, req.path, err.message);
