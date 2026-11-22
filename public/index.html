@@ -376,6 +376,11 @@
     .card{ box-shadow:none; border:none; padding:0; }
     .grid{ display:block; }
     .schedule-wrap{ margin-top:0; }
+    /* Repeat the table header and the totals/signature row (tfoot) at the top/bottom of every
+       printed page when the installment schedule spans more than one page. */
+    table.sched thead{ display:table-header-group; }
+    table.sched tfoot{ display:table-footer-group; }
+    table.sched tr.sign-row{ page-break-inside:avoid; }
   }
 </style>
 </head>
@@ -621,13 +626,14 @@
         <tbody id="schedBody"></tbody>
         <tfoot>
           <tr><td colspan="2">الإجمالي (ثمن الوحدة + الجراج + وديعة الصيانة)</td><td id="schedTotal" colspan="2"></td></tr>
+          <tr class="sign-row"><td colspan="4">
+            <div class="sign-area">
+              <div class="sign-box"><div class="line">الطرف الأول "البائع"</div></div>
+              <div class="sign-box"><div class="line">الطرف الثاني "المشتري"</div></div>
+            </div>
+          </td></tr>
         </tfoot>
       </table>
-
-      <div class="sign-area">
-        <div class="sign-box"><div class="line">الطرف الأول "البائع"</div></div>
-        <div class="sign-box"><div class="line">الطرف الثاني "المشتري"</div></div>
-      </div>
 
       <div id="docFloorplanWrap"></div>
     </div>
@@ -826,7 +832,7 @@ const fmt = n => Math.round(n).toLocaleString('en-US');
 const $ = id => document.getElementById(id);
 
 let selectedUnit = null;
-let selectedYears = 5;
+let selectedYears = '5';
 
 // ---------- Unit search ----------
 function renderResults(list){
@@ -923,48 +929,55 @@ function selectUnit(code){
 }
 
 // ---------- Years pills & plan presets (matching original Rawasin contract templates) ----------
-const MALL_YEARS = [5,6,7];
-
+// Residential Compound systems (apply to ALL residential Compound units regardless of area):
+//   4 سنوات: خصم 25% / مقدم 10%     5 سنوات: خصم 20% / مقدم 10%
+//   6 سنوات: خصم 15% / مقدم 10%     7 سنوات: خصم 12% / مقدم 10%
+//   9 سنوات: خصم 5%  / مقدم 10%     10 سنوات (جديد): خصم 3% / مقدم 10%
+//   10 سنوات (نظام قديم): يبقى متاحًا كخيار إضافي بجانب الأنظمة الجديدة (مقدم 5%، بدون خصم، دفعة مستحقة 10% بعد 3 سنوات)
+// الجراج يُستحق بعد سنة ونصف (القسط رقم 6) والصيانة بعد 3 سنوات ونصف (القسط رقم 14) فى كل الأنظمة أعلاه.
 const COMPOUND_PRESETS = {
-  4:  { downPct:10, annualOn:false, annualPct:4, garageOn:true, garageQ:6, maintQ:14, milestones:[],
+  '4':  { years:4, label:'4 سنوات', downPct:10, discountPct:25, annualOn:false, annualPct:4, garageOn:true, garageQ:6, maintQ:14, milestones:[],
         note:'خطة الـ4 سنوات لها هيكل خاص فى العقد الأصلي: دفعة استكمال 10% (بعد المقدم بـ45 يوم)، ودفعة مستحقة 10% (فى نهاية الخطة)، والجراج يُقسّط على 4 دفعات سنوية، والصيانة تُقسّط على 8 دفعات نصف سنوية. هذه الخطة تُحسب تلقائيًا بنفس الهيكل ولا تستخدم إعدادات الدفعة السنوية/الجراج/الصيانة العامة أعلاه.' },
-  5:  { downPct:10, annualOn:true, annualPct:4, garageOn:true, garageQ:6, maintQ:14, milestones:[] },
-  6:  { downPct:15, annualOn:true, annualPct:4, garageOn:true, garageQ:6, maintQ:14, milestones:[] },
-  7:  { downPct:20, annualOn:true, annualPct:4, garageOn:true, garageQ:6, maintQ:14, milestones:[] },
-  8:  { downPct:10, annualOn:true, annualPct:4, garageOn:true, garageQ:6, maintQ:14,
-        milestones:[{pct:10, quarter:16, label:'دفعة 10%'}] },
-  10: { downPct:5, annualOn:false, annualPct:4, garageOn:true, garageQ:6, maintQ:14,
-        milestones:[{pct:10, quarter:12, label:'دفعة مستحقة 10%'}] },
+  '5':  { years:5, label:'5 سنوات', downPct:10, discountPct:20, annualOn:true, annualPct:4, garageOn:true, garageQ:6, maintQ:14, milestones:[] },
+  '6':  { years:6, label:'6 سنوات', downPct:10, discountPct:15, annualOn:true, annualPct:4, garageOn:true, garageQ:6, maintQ:14, milestones:[] },
+  '7':  { years:7, label:'7 سنوات', downPct:10, discountPct:12, annualOn:true, annualPct:4, garageOn:true, garageQ:6, maintQ:14, milestones:[] },
+  '9':  { years:9, label:'9 سنوات', downPct:10, discountPct:5,  annualOn:true, annualPct:4, garageOn:true, garageQ:6, maintQ:14, milestones:[] },
+  '10': { years:10, label:'10 سنوات', downPct:10, discountPct:3, annualOn:true, annualPct:4, garageOn:true, garageQ:6, maintQ:14, milestones:[] },
+  '10_old': { years:10, label:'10 سنوات (نظام قديم)', downPct:5, discountPct:0, annualOn:false, annualPct:4, garageOn:true, garageQ:6, maintQ:14,
+        milestones:[{pct:10, quarter:12, label:'دفعة مستحقة 10%'}],
+        note:'النظام القديم لخطة الـ10 سنوات (محتفظ به كخيار إضافي): مقدم 5%، بدون خصم، أقساط ربع سنوية متساوية على 10 سنين، مع دفعة مستحقة 10% بعد 3 سنوات (القسط رقم 12).' },
 };
 
 // Mall plans: down payment + quarterly installments + optional annual payment + maintenance deposit at 3.5 years (quarter 14).
 // No garage (retail/medical units don't have a parking allocation), off by default but still toggleable per-unit if needed.
 const MALL_PRESETS = {
-  5: { downPct:5,  annualOn:true, annualPct:4, garageOn:false, garageQ:6, maintQ:14, milestones:[] },
-  6: { downPct:10, annualOn:true, annualPct:4, garageOn:false, garageQ:6, maintQ:14, milestones:[] },
-  7: { downPct:15, annualOn:true, annualPct:4, garageOn:false, garageQ:6, maintQ:14, milestones:[] },
+  '5': { years:5, label:'5 سنوات', downPct:5,  annualOn:true, annualPct:4, garageOn:false, garageQ:6, maintQ:14, milestones:[] },
+  '6': { years:6, label:'6 سنوات', downPct:10, annualOn:true, annualPct:4, garageOn:false, garageQ:6, maintQ:14, milestones:[] },
+  '7': { years:7, label:'7 سنوات', downPct:15, annualOn:true, annualPct:4, garageOn:false, garageQ:6, maintQ:14, milestones:[] },
 };
+
+// Cash option: a flat 45% discount on the unit price, paid in a single full payment at contract date.
+// Added to both Compound and Mall preset sets. Garage/maintenance (if toggled on) are also due at
+// contract date since there is no installment timeline to anchor them to a quarter.
+const CASH_PRESET = {
+  years:0, label:'كاش (خصم 45%)', downPct:100, discountPct:45, annualOn:false, annualPct:0,
+  garageOn:true, garageQ:null, maintQ:null, milestones:[],
+  note:'نظام الدفع كاش: خصم 45% على ثمن الوحدة، تُدفع بالكامل عند التعاقد. الجراج والصيانة (فى حالة تفعيلهما) يُدفعان أيضًا عند التعاقد.',
+};
+COMPOUND_PRESETS['cash'] = CASH_PRESET;
+MALL_PRESETS['cash'] = CASH_PRESET;
+
+const COMPOUND_YEARS = ['4','5','6','7','9','10','10_old','cash'];
+const MALL_YEARS = ['5','6','7','cash'];
 
 function currentPresetSet(){
   return (selectedUnit && selectedUnit.project === 'مول رواسين') ? MALL_PRESETS : COMPOUND_PRESETS;
 }
-// Compound plan availability depends on the unit's area:
-//  < 170 m²  → 4, 5, 6, 7, 10 years   (also gets an automatic 25% discount, see applyPreset)
-//  < 200 m²  → 4, 5, 6, 7, 8, 10 years
-//  >= 200 m² → all plans
-// The 10-year plan is always available regardless of area.
-function compoundYearsForArea(area){
-  if(area < 170) return [4,5,6,7,10];
-  if(area < 200) return [4,5,6,7,8,10];
-  return [4,5,6,7,8,10];
-}
+// These systems apply to ALL residential Compound units regardless of area — no more area-based tiering.
 function currentYearsOptions(){
-  if(!selectedUnit) return [4,5,6,7,8,10];
+  if(!selectedUnit) return COMPOUND_YEARS;
   if(selectedUnit.project === 'مول رواسين') return MALL_YEARS;
-  return compoundYearsForArea(selectedUnit.area || 0);
-}
-function isSmallCompoundUnit(){
-  return !!(selectedUnit && selectedUnit.project !== 'مول رواسين' && (selectedUnit.area || 0) < 170);
+  return COMPOUND_YEARS;
 }
 
 let milestones = [];
@@ -1002,38 +1015,35 @@ function applyPreset(years){
   $('garageToggle').checked = p.garageOn;
   $('garageQ').value = p.garageQ;
   $('maintQ').value = p.maintQ;
+  $('discountPct').value = p.discountPct || 0;
   milestones = p.milestones.map(m => ({...m}));
   renderMilestones();
 
-  // Automatic 25% discount for small Compound units (area < 170 m²) — only when the 4-year plan
-  // specifically is selected. Other plans never auto-fill the discount field.
-  const smallUnit = isSmallCompoundUnit();
-  const autoDiscountApplies = smallUnit && years === 4 && !isMall;
-  $('discountPct').value = autoDiscountApplies ? 25 : (p.discountPct || 0);
-
-  // Only Compound's 4-year plan has the special locked structure; Mall's plans behave normally.
-  const isLocked4y = years === 4 && !isMall;
-  $('milestonesSection').style.display = isLocked4y ? 'none' : 'block';
+  // Only Compound's 4-year plan has the special locked structure; Mall's plans and every other
+  // Compound plan (5/6/7/9/10/10_old) behave as standard quarterly plans. The cash plan has no
+  // installment timeline at all, so milestones/annual don't apply to it either.
+  const isLocked4y = years === '4' && !isMall;
+  const isCash = years === 'cash';
+  $('milestonesSection').style.display = (isLocked4y || isCash) ? 'none' : 'block';
   ['annualToggle','garageToggle','maintToggle'].forEach(id => {
-    $(id).closest('.toggle-row').style.opacity = isLocked4y ? '.4' : '1';
-    $(id).disabled = isLocked4y;
+    const lockThis = isLocked4y || (isCash && id === 'annualToggle');
+    $(id).closest('.toggle-row').style.opacity = lockThis ? '.4' : '1';
+    $(id).disabled = lockThis;
   });
 
-  let note = p.note || '';
-  if(autoDiscountApplies){
-    note = (note ? note + ' ' : '') + 'تم تطبيق خصم تلقائي 25% لأن مساحة الوحدة أقل من 170 م² وخطة الـ4 سنوات مختارة — يمكن تعديل النسبة يدويًا لو احتجت.';
-  }
+  const note = p.note || '';
   if(note){ $('planNote').style.display = 'block'; $('planNote').textContent = 'ℹ️ ' + note; }
   else { $('planNote').style.display = 'none'; }
 }
 
 function renderYearsPills(){
   const opts = currentYearsOptions();
+  const presetSet = currentPresetSet();
   if(!opts.includes(selectedYears)) selectedYears = opts[0];
-  $('yearsPills').innerHTML = opts.map(y=>`<div class="yp ${y===selectedYears?'active':''}" data-y="${y}">${y} سنوات</div>`).join('');
+  $('yearsPills').innerHTML = opts.map(y=>`<div class="yp ${y===selectedYears?'active':''}" data-y="${y}">${(presetSet[y] && presetSet[y].label) || (y + ' سنوات')}</div>`).join('');
   $('yearsPills').querySelectorAll('.yp').forEach(el=>{
     el.addEventListener('click', ()=>{
-      selectedYears = parseInt(el.getAttribute('data-y'));
+      selectedYears = el.getAttribute('data-y');
       $('yearsPills').querySelectorAll('.yp').forEach(e=>e.classList.remove('active'));
       el.classList.add('active');
       applyPreset(selectedYears);
@@ -1079,7 +1089,8 @@ function dstr(d){
 // Garage and maintenance are pure add-ons on top of the unit price (not subtracted from the financed base).
 function computeGeneralPlan(){
   const price = getPrice();
-  const years = selectedYears;
+  const preset = currentPresetSet()[selectedYears] || {};
+  const years = preset.years || 0;
   const qCount = years * 4;
   const downPct = (parseFloat($('downPct').value) || 0) / 100;
   const downAmt = price * downPct;
@@ -1188,15 +1199,38 @@ function computeFourYearPlan(){
     financedBase, qBase, rows, total, isFourYear:true };
 }
 
+// ---------- Cash engine: full payment at contract date with a flat 45% discount already applied via getPrice() ----------
+function computeCashPlan(){
+  const price = getPrice();
+  const startDate = $('contractDate').value ? new Date($('contractDate').value) : new Date();
+
+  const garageOn = $('garageToggle').checked;
+  const garageAmt = parseFloat($('garageAmount').value) || 0;
+  const maintOn = $('maintToggle').checked;
+  const maintPct = (parseFloat($('maintPct').value) || 0) / 100;
+  const maintAmt = maintOn ? price * maintPct : 0;
+
+  const rows = [];
+  rows.push({ label:'دفعة كاش بالكامل (خصم الكاش)', date:new Date(startDate), amount:price, note:'تُدفع بالكامل عند التعاقد', yearStart:true });
+  if(garageOn) rows.push({ label:'الجراج', date:new Date(startDate), amount:garageAmt, note:'تُدفع عند التعاقد', yearStart:false });
+  if(maintOn) rows.push({ label:'وديعة الصيانة', date:new Date(startDate), amount:maintAmt, note:'تُدفع عند التعاقد', yearStart:false });
+
+  const total = rows.reduce((s,r)=>s+r.amount, 0);
+  return { price, years:0, qCount:0, downAmt:price, downPct:1, annualOn:false, annualPct:0, annualPerYear:0, annualTotal:0,
+    garageOn, garageAmt, garageQ:null, maintOn, maintAmt, maintPct, maintQ:null, financedBase:0, qBase:0, rows, total, isCash:true };
+}
+
 function computePlan(){
   const isMall = selectedUnit && selectedUnit.project === 'مول رواسين';
+  if(selectedYears === 'cash') return computeCashPlan();
   // Only the Compound's 4-year plan uses the specialized legacy structure (completion/due payments,
   // split garage & maintenance). The Mall's 4-year plan is a simple discount + standard quarterly plan.
-  return (selectedYears === 4 && !isMall) ? computeFourYearPlan() : computeGeneralPlan();
+  return (selectedYears === '4' && !isMall) ? computeFourYearPlan() : computeGeneralPlan();
 }
 
 function updateAll(){
-  $('qCountDisplay').value = selectedYears * 4 + ' قسط';
+  const activePreset = currentPresetSet()[selectedYears];
+  $('qCountDisplay').value = selectedYears === 'cash' ? 'دفعة واحدة (كاش)' : ((activePreset ? activePreset.years : 0) * 4) + ' قسط';
   ['annualExtra','garageExtra','maintExtra'].forEach((id,idx)=>{
     const toggles = ['annualToggle','garageToggle','maintToggle'];
     $(id).style.opacity = $(toggles[idx]).checked ? '1' : '.35';
@@ -1212,7 +1246,7 @@ function updateAll(){
   $('summaryBody').innerHTML = `
     <div class="s-row"><span class="l">صافي قيمة الوحدة</span><span class="v">${fmt(p.price)}</span></div>
     <div class="s-row"><span class="l">المقدم (${(p.downPct*100).toFixed(0)}%)</span><span class="v">${fmt(p.downAmt)}</span></div>
-    <div class="s-row"><span class="l">عدد سنوات التقسيط</span><span class="v">${p.years} سنوات (${p.qCount} قسط)</span></div>
+    <div class="s-row"><span class="l">نظام السداد</span><span class="v">${p.isCash ? 'كاش (دفعة واحدة)' : p.years + ' سنوات (' + p.qCount + ' قسط)'}</span></div>
     <div class="s-row"><span class="l">القسط الربعي الأساسي</span><span class="v">${fmt(p.qBase)}</span></div>
     ${p.annualOn ? `<div class="s-row"><span class="l">الدفعة السنوية (${(p.annualPct*100).toFixed(0)}%)</span><span class="v">${fmt(p.annualPerYear)}</span></div>` : ''}
     ${p.garageOn ? `<div class="s-row"><span class="l">الجراج</span><span class="v">${fmt(p.garageAmt)}</span></div>` : ''}
@@ -1232,7 +1266,7 @@ $('generateBtn').addEventListener('click', async ()=>{
     <div class="doc-box"><div class="l">المساحة</div><div class="v">${selectedUnit.area>0 ? selectedUnit.area+' م²' : '—'}</div></div>
     <div class="doc-box"><div class="l">حديقة / روف</div><div class="v">${selectedUnit.garden_area>0 ? selectedUnit.garden_area+' م²' : 'لا يوجد'}</div></div>
     <div class="doc-box"><div class="l">قيمة الوحدة</div><div class="v">${fmt(p.price)} ج.م</div></div>
-    <div class="doc-box"><div class="l">خطة السداد</div><div class="v">${p.years} سنوات / مقدم ${(p.downPct*100).toFixed(0)}%</div></div>
+    <div class="doc-box"><div class="l">خطة السداد</div><div class="v">${p.isCash ? 'دفعة كاش بالكامل (خصم 45%)' : p.years + ' سنوات / مقدم ' + (p.downPct*100).toFixed(0) + '%'}</div></div>
   `;
 
   $('docFloorplanWrap').innerHTML = '';
@@ -1296,8 +1330,23 @@ $('wordBtn').addEventListener('click', async ()=>{
     </tr>`).join('');
   const html = `
   <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
-  <head><meta charset="utf-8"><title>خطة سداد ${unitCode}</title></head>
-  <body dir="rtl" style="font-family:Arial, Tahoma; padding:20px;">
+  <head>
+    <meta charset="utf-8"><title>خطة سداد ${unitCode}</title>
+    <style>
+      @page Section1 { mso-footer:f1; margin:0.9in 0.8in 1.3in 0.8in; }
+      div.Section1 { page:Section1; }
+    </style>
+  </head>
+  <body dir="rtl" style="font-family:Arial, Tahoma;">
+    <div style='mso-element:footer' id=f1>
+      <table style="width:100%;border-collapse:collapse;">
+        <tr>
+          <td style="text-align:center;width:50%;border-top:1px solid #000;padding-top:6px;">الطرف الأول "البائع"</td>
+          <td style="text-align:center;width:50%;border-top:1px solid #000;padding-top:6px;">الطرف الثاني "المشتري"</td>
+        </tr>
+      </table>
+    </div>
+  <div class="Section1" style="padding:20px;">
     <h2 style="text-align:center;color:#1B2A3D;">جدول أقساط وحدة في مشروع رواسين</h2>
     <p style="text-align:center;color:#666;">Dama Development for Real Estate Development &amp; Investment — ملحق رقم (2) لعقد البيع</p>
     <table style="width:100%;border-collapse:collapse;margin-bottom:16px;">
@@ -1306,7 +1355,7 @@ $('wordBtn').addEventListener('click', async ()=>{
       <tr><td style="padding:6px 10px;font-weight:bold;">المساحة</td><td style="padding:6px 10px;">${selectedUnit.area>0 ? selectedUnit.area+' م²' : '—'}</td>
           <td style="padding:6px 10px;font-weight:bold;">حديقة / روف</td><td style="padding:6px 10px;">${selectedUnit.garden_area>0 ? selectedUnit.garden_area+' م²' : 'لا يوجد'}</td></tr>
       <tr><td style="padding:6px 10px;font-weight:bold;">قيمة الوحدة</td><td style="padding:6px 10px;">${fmt(p.price)} ج.م</td>
-          <td style="padding:6px 10px;font-weight:bold;">خطة السداد</td><td style="padding:6px 10px;">${p.years} سنوات / مقدم ${(p.downPct*100).toFixed(0)}%</td></tr>
+          <td style="padding:6px 10px;font-weight:bold;">خطة السداد</td><td style="padding:6px 10px;">${p.isCash ? 'دفعة كاش بالكامل (خصم 45%)' : p.years + ' سنوات / مقدم ' + (p.downPct*100).toFixed(0) + '%'}</td></tr>
     </table>
     <table style="width:100%;border-collapse:collapse;">
       <thead><tr style="background:#1B2A3D;color:#fff;">
@@ -1321,11 +1370,8 @@ $('wordBtn').addEventListener('click', async ()=>{
         <td colspan="2" style="padding:8px;border:1px solid #ccc;">${fmt(p.total)} ج.م</td>
       </tr></tfoot>
     </table>
-    <div style="display:flex;justify-content:space-between;margin-top:60px;">
-      <div style="text-align:center;width:220px;border-top:1px solid #000;padding-top:6px;">الطرف الأول "البائع"</div>
-      <div style="text-align:center;width:220px;border-top:1px solid #000;padding-top:6px;">الطرف الثاني "المشتري"</div>
-    </div>
     ${fpImgTag}
+  </div>
   </body></html>`;
   const blob = new Blob(['\ufeff', html], {type:'application/msword'});
   const url = URL.createObjectURL(blob);
