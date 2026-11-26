@@ -671,10 +671,19 @@
             <option value="مغلقة">مغلقة</option>
           </select>
         </div>
+        <div class="field" style="margin-bottom:0;">
+          <label>العمارة</label>
+          <select id="invCourtFilter">
+            <option value="all">كل العمارات</option>
+          </select>
+        </div>
       </div>
+
+      <div id="invTotals" style="font-size:12.5px;color:var(--muted);margin-bottom:10px;"></div>
 
       <div class="actions" style="margin-bottom:10px;">
         <button class="btn btn-primary" id="addUnitBtn">+ إضافة وحدة جديدة</button>
+        <button class="btn btn-ghost" id="deleteSelectedBtn" style="display:none;">🗑️ حذف المحدد (<span id="deleteSelectedCount">0</span>)</button>
         <button class="btn btn-ghost" id="exportJsonBtn">⬇️ نسخة احتياطية كاملة (JSON)</button>
         <label class="btn btn-ghost" style="cursor:pointer;">⬆️ استيراد نسخة (JSON)
           <input type="file" id="importJsonInput" accept="application/json" style="display:none;">
@@ -733,6 +742,7 @@
         <table class="sched inv-table">
           <thead>
             <tr>
+              <th><input type="checkbox" id="invSelectAll"></th>
               <th>كود الوحدة</th><th>المشروع</th><th>الوصف</th><th>المساحة (م²)</th><th>حديقة/روف (م²)</th><th>السعر (جنيه)</th><th>الحالة</th><th>الرسم الهندسي</th><th>حذف</th>
             </tr>
           </thead>
@@ -1410,18 +1420,74 @@ document.querySelectorAll('.tabbtn').forEach(btn=>{
 });
 
 // ============ INVENTORY MANAGEMENT ============
+// Building/court code is the first dot-separated segment of the unit code (e.g. "C1", "R2").
+function unitCourt(code){ return (code || '').split('.')[0] || '—'; }
+
+// Natural, segment-aware comparator so units sort by building first, then by floor/apt within it
+// ("G" = ground floor, sorts before numeric floors; numeric segments compare as numbers, not text).
+function naturalCodeCompare(a, b){
+  const as = (a||'').split('.'), bs = (b||'').split('.');
+  const len = Math.max(as.length, bs.length);
+  for(let i=0; i<len; i++){
+    const x = as[i], y = bs[i];
+    if(x === undefined) return -1;
+    if(y === undefined) return 1;
+    const xIsG = /^g$/i.test(x), yIsG = /^g$/i.test(y);
+    const xNum = /^-?\d+(\.\d+)?$/.test(x) ? parseFloat(x) : (xIsG ? -1 : null);
+    const yNum = /^-?\d+(\.\d+)?$/.test(y) ? parseFloat(y) : (yIsG ? -1 : null);
+    if(xNum !== null && yNum !== null){
+      if(xNum !== yNum) return xNum - yNum;
+    } else {
+      const cmp = x.localeCompare(y, undefined, {numeric:true, sensitivity:'base'});
+      if(cmp !== 0) return cmp;
+    }
+  }
+  return 0;
+}
+
+let selectedInvCodes = new Set();
+
+function populateCourtFilter(){
+  const sel = $('invCourtFilter');
+  const prev = sel.value || 'all';
+  const courts = [...new Set(UNITS.map(u => unitCourt(u.code)))].sort((a,b)=>naturalCodeCompare(a,b));
+  sel.innerHTML = '<option value="all">كل العمارات</option>' + courts.map(c => `<option value="${c}">${c}</option>`).join('');
+  sel.value = courts.includes(prev) ? prev : 'all';
+}
+
+function updateDeleteSelectedUI(){
+  const n = selectedInvCodes.size;
+  $('deleteSelectedCount').textContent = n;
+  $('deleteSelectedBtn').style.display = (n>0 && can('inventory.delete')) ? 'inline-flex' : 'none';
+}
+
 function renderInventory(){
+  populateCourtFilter();
   const q = $('invSearch').value.trim().toLowerCase();
   const proj = $('invProjectFilter').value;
   const stat = $('invStatusFilter').value;
+  const court = $('invCourtFilter').value;
   let list = UNITS.filter(u =>
     (proj==='all' || u.project===proj) &&
     (stat==='all' || u.condition===stat) &&
+    (court==='all' || unitCourt(u.code)===court) &&
     (!q || u.code.toLowerCase().includes(q) || u.desc.toLowerCase().includes(q))
   );
+  list.sort((a,b) => naturalCodeCompare(a.code, b.code));
+
+  // Drop selections for units no longer visible/existing, so the bulk-delete count stays accurate.
+  const visibleCodes = new Set(list.map(u=>u.code));
+  [...selectedInvCodes].forEach(c => { if(!visibleCodes.has(c)) selectedInvCodes.delete(c); });
+
   $('invCount').textContent = `عدد الوحدات المعروضة: ${list.length} من إجمالي ${UNITS.length}`;
+
+  const totalArea = list.reduce((s,u)=>s+(u.area||0), 0);
+  const totalPrice = list.reduce((s,u)=>s+(u.price||0), 0);
+  $('invTotals').textContent = `إجمالي عدد الوحدات: ${list.length}  —  إجمالي المساحة: ${fmt(totalArea)} م²  —  إجمالي القيمة البيعية: ${fmt(totalPrice)} ج.م`;
+
   $('invBody').innerHTML = list.map(u => `
     <tr data-code="${u.code}">
+      <td><input type="checkbox" class="invRowCheck" data-code="${u.code}" ${selectedInvCodes.has(u.code)?'checked':''}></td>
       <td style="font-weight:700;color:var(--navy);font-family:'Cairo',sans-serif;">${u.code}</td>
       <td>${u.project}</td>
       <td style="text-align:right;">${u.desc}</td>
@@ -1438,7 +1504,19 @@ function renderInventory(){
       </td>
       <td><button class="btn btn-ghost btn-sm fp-btn" data-code="${u.code}" style="white-space:nowrap;">${u.hasFloorPlan ? '🖼️ عرض' : '📎 رفع'}</button></td>
       <td><button class="del-btn" data-code="${u.code}" title="حذف الوحدة">🗑️</button></td>
-    </tr>`).join('') || `<tr><td colspan="9" style="padding:24px;color:var(--muted);">لا توجد وحدات مطابقة</td></tr>`;
+    </tr>`).join('') || `<tr><td colspan="10" style="padding:24px;color:var(--muted);">لا توجد وحدات مطابقة</td></tr>`;
+
+  updateDeleteSelectedUI();
+  $('invSelectAll').checked = list.length>0 && list.every(u => selectedInvCodes.has(u.code));
+
+  $('invBody').querySelectorAll('.invRowCheck').forEach(cb=>{
+    cb.addEventListener('change', ()=>{
+      const code = cb.getAttribute('data-code');
+      if(cb.checked) selectedInvCodes.add(code); else selectedInvCodes.delete(code);
+      $('invSelectAll').checked = list.length>0 && list.every(u => selectedInvCodes.has(u.code));
+      updateDeleteSelectedUI();
+    });
+  });
 
   $('invBody').querySelectorAll('.fp-btn').forEach(btn=>{
     btn.addEventListener('click', ()=> openFloorplanModal(btn.getAttribute('data-code')));
@@ -1503,7 +1581,34 @@ function renderInventory(){
   });
 }
 
-['invSearch','invProjectFilter','invStatusFilter'].forEach(id => $(id).addEventListener('input', renderInventory));
+['invSearch','invProjectFilter','invStatusFilter','invCourtFilter'].forEach(id => $(id).addEventListener('input', renderInventory));
+
+$('invSelectAll').addEventListener('change', ()=>{
+  $('invBody').querySelectorAll('.invRowCheck').forEach(cb=>{
+    cb.checked = $('invSelectAll').checked;
+    const code = cb.getAttribute('data-code');
+    if(cb.checked) selectedInvCodes.add(code); else selectedInvCodes.delete(code);
+  });
+  updateDeleteSelectedUI();
+});
+
+$('deleteSelectedBtn').addEventListener('click', async ()=>{
+  const codes = [...selectedInvCodes];
+  if(!codes.length) return;
+  if(!confirm(`هل تريد حذف ${codes.length} وحدة محددة من المخزون؟ لا يمكن التراجع عن هذا الإجراء.`)) return;
+  $('deleteSelectedBtn').disabled = true;
+  const failed = [];
+  for(const code of codes){
+    try{
+      await apiDeleteUnit(code);
+      UNITS = UNITS.filter(u => u.code !== code);
+      selectedInvCodes.delete(code);
+    }catch(e){ failed.push(code); }
+  }
+  $('deleteSelectedBtn').disabled = false;
+  if(failed.length) alert('تعذّر حذف بعض الوحدات: ' + failed.join(', '));
+  renderInventory();
+});
 
 // ---- Floor plan modal (upload / view / delete) — supports multiple images ----
 let fpCurrentCode = null;
