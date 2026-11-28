@@ -946,8 +946,7 @@ function selectUnit(code){
 //   10 سنوات (نظام قديم): يبقى متاحًا كخيار إضافي بجانب الأنظمة الجديدة (مقدم 5%، بدون خصم، دفعة مستحقة 10% بعد 3 سنوات)
 // الجراج يُستحق بعد سنة ونصف (القسط رقم 6) والصيانة بعد 3 سنوات ونصف (القسط رقم 14) فى كل الأنظمة أعلاه.
 const COMPOUND_PRESETS = {
-  '4':  { years:4, label:'4 سنوات', downPct:10, discountPct:25, annualOn:false, annualPct:4, garageOn:true, garageQ:6, maintQ:14, milestones:[],
-        note:'خطة الـ4 سنوات لها هيكل خاص فى العقد الأصلي: دفعة استكمال 10% (بعد المقدم بـ45 يوم)، ودفعة مستحقة 10% (فى نهاية الخطة)، والجراج يُقسّط على 4 دفعات سنوية، والصيانة تُقسّط على 8 دفعات نصف سنوية. هذه الخطة تُحسب تلقائيًا بنفس الهيكل ولا تستخدم إعدادات الدفعة السنوية/الجراج/الصيانة العامة أعلاه.' },
+  '4':  { years:4, label:'4 سنوات', downPct:10, discountPct:25, annualOn:false, annualPct:4, garageOn:true, garageQ:6, maintQ:14, milestones:[] },
   '5':  { years:5, label:'5 سنوات', downPct:10, discountPct:20, annualOn:true, annualPct:4, garageOn:true, garageQ:6, maintQ:14, milestones:[] },
   '6':  { years:6, label:'6 سنوات', downPct:10, discountPct:15, annualOn:true, annualPct:4, garageOn:true, garageQ:6, maintQ:14, milestones:[] },
   '7':  { years:7, label:'7 سنوات', downPct:10, discountPct:12, annualOn:true, annualPct:4, garageOn:true, garageQ:6, maintQ:14, milestones:[] },
@@ -1030,14 +1029,13 @@ function applyPreset(years){
   milestones = p.milestones.map(m => ({...m}));
   renderMilestones();
 
-  // Only Compound's 4-year plan has the special locked structure; Mall's plans and every other
-  // Compound plan (5/6/7/9/10/10_old) behave as standard quarterly plans. The cash plan has no
-  // installment timeline at all, so milestones/annual don't apply to it either.
-  const isLocked4y = years === '4' && !isMall;
+  // Every Compound/Mall plan now behaves as a standard quarterly plan (equal installments, with
+  // the annual payment only applied when the user turns its toggle on). Only the cash plan has no
+  // installment timeline at all, so milestones/annual don't apply to it.
   const isCash = years === 'cash';
-  $('milestonesSection').style.display = (isLocked4y || isCash) ? 'none' : 'block';
+  $('milestonesSection').style.display = isCash ? 'none' : 'block';
   ['annualToggle','garageToggle','maintToggle'].forEach(id => {
-    const lockThis = isLocked4y || (isCash && id === 'annualToggle');
+    const lockThis = isCash && id === 'annualToggle';
     $(id).closest('.toggle-row').style.opacity = lockThis ? '.4' : '1';
     $(id).disabled = lockThis;
   });
@@ -1239,11 +1237,10 @@ function computeCashPlan(){
 }
 
 function computePlan(){
-  const isMall = selectedUnit && selectedUnit.project === 'مول رواسين';
   if(selectedYears === 'cash') return computeCashPlan();
-  // Only the Compound's 4-year plan uses the specialized legacy structure (completion/due payments,
-  // split garage & maintenance). The Mall's 4-year plan is a simple discount + standard quarterly plan.
-  return (selectedYears === '4' && !isMall) ? computeFourYearPlan() : computeGeneralPlan();
+  // Every plan (including the 4-year plan) now uses the standard quarterly engine: equal
+  // installments with the annual payment, garage and maintenance applied only when toggled on.
+  return computeGeneralPlan();
 }
 
 function updateAll(){
